@@ -52,7 +52,7 @@ def build_inverted_index(item_codes, pq_type_name, dataset_models_config, curren
         for split in tqdm(range(num_splits), unit='split', desc="Building inverted index"):
             for item in range(num_items):
                 code = target_codes[item, split]
-                code_items[split * k + code].append(item)
+                code_items[split * k + int(code)].append(item)
 
         # Compute padding
         items_per_code = [len(code_items[i]) for i in range(len(code_items))]
