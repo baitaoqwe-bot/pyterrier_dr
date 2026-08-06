@@ -83,16 +83,39 @@ class ProductQuantizer:
         N = len(selected)
         codes = np.empty((N, self._M), dtype=code_type_from_Ks(self._Ks)) # [N, M]
         total_error = 0.0
+        # encode_method = self.encode
+        # encode_args = {}
+        # gpu_msg = "cpu"
+        # if gpu is not None:
+        #     logger.info("Centroid fingerprint " + str( fingerprint_tensor_bits_np(self.centroids)))
+        #     self.centroids_t = torch.from_numpy(self.centroids).to(gpu)
+        #     encode_method = self.encode_gpu
+        #     if gpu is not None:
+        #         encode_args['device'] = gpu
+        #     gpu_msg = str(gpu)
+
         encode_method = self.encode
         encode_args = {}
         gpu_msg = "cpu"
-        if gpu is not None:
-            logger.info("Centroid fingerprint " + str( fingerprint_tensor_bits_np(self.centroids)))
-            self.centroids_t = torch.from_numpy(self.centroids).to(gpu)
-            encode_method = self.encode_gpu
-            if gpu is not None:
-                encode_args['device'] = gpu
+
+        encode_gpu = getattr(self, "encode_gpu", None)
+
+        if gpu is not None and encode_gpu is not None:
+            logger.info(
+                "Centroid fingerprint " + str(fingerprint_tensor_bytes)
+            )
+            self.centroids_t = torch.from_numpy(
+                self.centroids
+            ).to(gpu)
+
+            encode_method = encode_gpu
+            encode_args["device"] = gpu
             gpu_msg = str(gpu)
+
+        elif gpu is not None:
+            logger.info(
+                "[PQ] GPU encoding is unavailable; falling back to CPU."
+            )
 
         iter = range(0, N, bs)
         for start in tqdm(iter, desc=f"[PQ] Encoding PQ batches ({gpu_msg})", total = math.ceil(N / bs)) if verbose else iter:

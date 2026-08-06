@@ -11,6 +11,7 @@ import os
 import pyterrier_dr
 import pyterrier as pt
 import torch 
+from peft import LoraConfig, TaskType
 torch.set_float32_matmul_precision('high')
 
 # This script is to make it easy to run JPQ training and evaluation with different models
@@ -29,11 +30,19 @@ DEFAULT_INIT_BY_NAME: dict[str, str] = {
 }
 
 
-def instantiate_model(model_name: str):
+def instantiate_model(model_name: str, peft_config=None):
     """
     Instantiate the model by evaluating the resolved expression in a restricted namespace.
     Only whitelisted globals are visible to eval().
     """
+    if peft_config is not None:
+        if model_name != "e5":
+            raise ValueError(
+                "LoRA is currently supported only for the E5 model."
+            )
+        return pyterrier_dr.E5(
+            peft_config=peft_config,
+        )
     allowed_globals = {
         "pyterrier_dr": pyterrier_dr,
     }
@@ -134,6 +143,35 @@ def parse_args():
     add_data_args(parser)
     add_training_args(parser)
 
+    lora_group = parser.add_argument_group("LoRA")
+
+    lora_group.add_argument(
+        "--use-lora",
+        action="store_true",
+        help="Enable LoRA for the E5 query encoder.",
+    )
+
+    lora_group.add_argument(
+        "--lora-r",
+        type=int,
+        default=8,
+        help="LoRA rank.",
+    )
+
+    lora_group.add_argument(
+        "--lora-alpha",
+        type=int,
+        default=16,
+        help="LoRA scaling alpha.",
+    )
+
+    lora_group.add_argument(
+        "--lora-dropout",
+        type=float,
+        default=0.1,
+        help="LoRA dropout probability.",
+    )
+
     args = parser.parse_args()
 
     data = DataConfig(
@@ -159,11 +197,38 @@ def parse_args():
         frozen_query_encoder=args.frozen_query_encoder,
         pq_only=args.pq_only
     )
-    return data, train
+    return data, train, args
 
 
 if __name__ == "__main__":
-    data, train = parse_args()
+    data, train, args = parse_args()
+
+    peft_config = None
+    if args.use_lora:
+        if args.frozen_query_encoder:
+            raise ValueError(
+                "--use-lora cannot be combined with "
+                "--frozen-query-encoder."
+            )
+
+        peft_config = LoraConfig(
+            task_type=TaskType.FEATURE_EXTRACTION,
+            r=args.lora_r,
+            lora_alpha=args.lora_alpha,
+            lora_dropout=args.lora_dropout,
+            target_modules=["query", "value"],
+            bias="none",
+        )
+
+        print(
+            "LORA CONFIG:",
+            {
+                "r": args.lora_r,
+                "alpha": args.lora_alpha,
+                "dropout": args.lora_dropout,
+                "target_modules": ["query", "value"],
+            },
+        )
 
     print("DATA CONFIG:", data)
     print("TRAIN CONFIG:", train)
@@ -171,7 +236,9 @@ if __name__ == "__main__":
     target = data.target_dir + "/" + compute_index_name(data, train)
     print("DESTINATION:", target)
 
-    model = instantiate_model(data.model_name)
+    model = instantiate_model(
+        data.model_name,
+        peft_config=peft_config,)
     print("Instantiated model:", model)
 
     index = pyterrier_dr.FlexIndex(data.base_index)
@@ -214,7 +281,9 @@ if __name__ == "__main__":
     newindex = t.jpq_index(target)
     t.query_encoder.model.save_pretrained(target) # type: ignore
 
-    oldmodel = instantiate_model(data.model_name)
+    oldmodel = instantiate_model(
+        data.model_name,
+        peft_config=peft_config,)
 
     p = [
         oldmodel >> index.retriever(), # type: ignore
