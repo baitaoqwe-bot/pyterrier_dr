@@ -32,22 +32,17 @@ class SBertBiEncoder(BiEncoder):
                  batch_size=32, 
                  text_field='text', 
                  verbose=False, 
-                 device=None,
-                 peft_config=None
+                 device=None
                  ):
         super().__init__(batch_size=batch_size, 
                          text_field=text_field, 
                          verbose=verbose)
         self.model_name = model_name
-        self.peft_config = peft_config
         if device is None:
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.device = torch.device(device)
         from sentence_transformers import SentenceTransformer
         self.model = SentenceTransformer(model_name)
-
-        if peft_config is not None:
-            self.model.add_adapter(peft_config)
 
         self.model = self.model.to(self.device).eval()
         self.config = AutoConfig.from_pretrained(model_name)
@@ -103,14 +98,12 @@ class _SBertBiEncoder(SBertBiEncoder, metaclass=Variants):
                  batch_size=32, 
                  text_field='text', 
                  verbose=False, 
-                 device=None,
-                 peft_config=None):
+                 device=None):
         super().__init__(model_name or next(iter(self.VARIANTS.values())),
                          batch_size=batch_size, 
                          text_field=text_field, 
                          verbose=verbose, 
-                         device=device,
-                         peft_config=peft_config)
+                         device=device)
 
     def __repr__(self):
         inv_variants = {v: k for k, v in self.VARIANTS.items()}

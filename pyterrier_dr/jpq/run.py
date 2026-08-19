@@ -10,13 +10,15 @@ from pyterrier_dr.jpq import JPQTrainer
 import os
 import pyterrier_dr
 import pyterrier as pt
-import torch 
-from peft import LoraConfig, TaskType
+import torch
+from peft import LoraConfig, TaskType, get_peft_model
+from transformers import PreTrainedModel
+from sentence_transformers import SentenceTransformer
 torch.set_float32_matmul_precision('high')
 
 # This script is to make it easy to run JPQ training and evaluation with different models
 # The DEFAULT_INIT_BY_NAME dict maps a model name to a python expression that instantiates the model.
-# It make require updating with new models, or for the star/adore_star models 
+# It make require updating with new models, or for the star/adore_star models
 
 DEFAULT_INIT_BY_NAME: dict[str, str] = {
     "tct_colbert": "pyterrier_dr.TctColBert.hnp()",
@@ -30,19 +32,12 @@ DEFAULT_INIT_BY_NAME: dict[str, str] = {
 }
 
 
-def instantiate_model(model_name: str, peft_config=None):
+def instantiate_model(model_name: str):
     """
     Instantiate the model by evaluating the resolved expression in a restricted namespace.
     Only whitelisted globals are visible to eval().
     """
-    if peft_config is not None:
-        if model_name != "e5":
-            raise ValueError(
-                "LoRA is currently supported only for the E5 model."
-            )
-        return pyterrier_dr.E5(
-            peft_config=peft_config,
-        )
+
     allowed_globals = {
         "pyterrier_dr": pyterrier_dr,
     }
@@ -56,6 +51,24 @@ def instantiate_model(model_name: str, peft_config=None):
         ) from e
     return obj
 
+
+def apply_peft(biencoder: pyterrier_dr.BiEncoder, peft_config):
+    model = getattr(biencoder, "model", None)
+
+    if isinstance(model, SentenceTransformer):
+        transformer = model[0]
+        hf_model = transformer.auto_model
+        transformer.model = get_peft_model(hf_model, peft_config)
+
+    elif isinstance(model, PreTrainedModel):
+        biencoder.model = get_peft_model(model, peft_config)
+
+    else:
+        raise NotImplementedError(
+            f"PEFT is not supported for model type: {type(model)}"
+        )
+
+    return biencoder
 
 _slug_re = re.compile(r"[^a-zA-Z0-9._-]+")
 def _slug(s: str, maxlen: int = 64) -> str:
@@ -113,7 +126,7 @@ def add_data_args(parser: argparse.ArgumentParser):
     p = parser.add_argument_group("Data")
     p.add_argument("--base-index", required=True)
     p.add_argument("--target-dir", required=True)
-    p.add_argument("--model-name", choices=["tct_colbert", "tas_b", "star", "repllama", "adore_star", "e5", "dragon", "lion"], default="tct_colbert")    
+    p.add_argument("--model-name", choices=["tct_colbert", "tas_b", "star", "repllama", "adore_star", "e5", "dragon", "lion"], default="tct_colbert")
     p.add_argument("--train-ds", default="msmarco-passage/train")
     p.add_argument("--eval-ds", default="irds:msmarco-passage/dev/small")
     p.add_argument("--eval-split", default=None)
@@ -177,7 +190,7 @@ def parse_args():
     data = DataConfig(
         base_index=args.base_index,
         target_dir=args.target_dir,
-        model_name=args.model_name,        
+        model_name=args.model_name,
         train_ds=args.train_ds,
         eval_ds=args.eval_ds,
         eval_split=args.eval_split,
@@ -238,7 +251,9 @@ if __name__ == "__main__":
 
     model = instantiate_model(
         data.model_name,
-        peft_config=peft_config,)
+        )
+    if peft_config is not None:
+        model = apply_peft(model, peft_config)
     print("Instantiated model:", model)
 
     index = pyterrier_dr.FlexIndex(data.base_index)
@@ -265,7 +280,7 @@ if __name__ == "__main__":
 
     t = JPQTrainer(model, index, M=train.M, pq_impl=train.pq_impl, nbits=train.nbits, train_query_encoder=not train.frozen_query_encoder)
     t.fit(
-        merge_queries_into_docpairs(train_dataset.queries_iter(), train_dataset.docpairs_iter()[:train.pairs_cap]), 
+        merge_queries_into_docpairs(train_dataset.queries_iter(), train_dataset.docpairs_iter()[:train.pairs_cap]),
         pq_sample_size=train.pq_sample_size,
         valid_every=train.valid_every,
         eval_queries = eval_dataset.get_topics(data.eval_split),
@@ -283,7 +298,7 @@ if __name__ == "__main__":
 
     oldmodel = instantiate_model(
         data.model_name,
-        peft_config=peft_config,)
+       )
 
     p = [
         oldmodel >> index.retriever(), # type: ignore
