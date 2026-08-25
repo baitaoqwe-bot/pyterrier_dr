@@ -114,6 +114,7 @@ class TrainingConfig:
     nbits: int = 8
     pq_sample_size: int = 159_744
     valid_every: int = 500
+    total_steps: int = 1_000_000_000
     in_batch_negs: bool = True
     lambda_rank: bool = True
     jpq_negs: int = 200
@@ -121,7 +122,10 @@ class TrainingConfig:
     frozen_query_encoder: bool = False
     pq_only: bool = False
 
-
+def optional_str(value: str):
+    if value.lower() == "none":
+        return None
+    return value
 def add_data_args(parser: argparse.ArgumentParser):
     p = parser.add_argument_group("Data")
     p.add_argument("--base-index", required=True)
@@ -129,9 +133,9 @@ def add_data_args(parser: argparse.ArgumentParser):
     p.add_argument("--model-name", choices=["tct_colbert", "tas_b", "star", "repllama", "adore_star", "e5", "dragon", "lion"], default="tct_colbert")
     p.add_argument("--train-ds", default="msmarco-passage/train")
     p.add_argument("--eval-ds", default="irds:msmarco-passage/dev/small")
-    p.add_argument("--eval-split", default=None)
+    p.add_argument("--eval-split", type=optional_str, default=None)
     p.add_argument("--test-ds", default="msmarco_passage")
-    p.add_argument("--test-split", default="test-2019,test-2020")
+    p.add_argument("--test-split", type=optional_str, default="test-2019,test-2020")
 
 
 def add_training_args(parser: argparse.ArgumentParser):
@@ -140,6 +144,12 @@ def add_training_args(parser: argparse.ArgumentParser):
     p.add_argument("--M", type=int, default=96)
     p.add_argument("--nbits", type=int, default=8)
     p.add_argument("--pq-sample-size", type=int, default=159744)
+    p.add_argument(
+        "--total-steps",
+        type=int,
+        default=1_000_000_000,
+        help="Maximum number of JPQ training steps."
+    )
     p.add_argument("--valid-every", type=int, default=500)
     p.add_argument("--in-batch-negs", action="store_true", default=True)
     p.add_argument("--no-in-batch", dest="in_batch_negs", action="store_false")
@@ -203,6 +213,7 @@ def parse_args():
         nbits=args.nbits,
         pq_sample_size=args.pq_sample_size,
         valid_every=args.valid_every,
+        total_steps=args.total_steps,
         in_batch_negs=args.in_batch_negs,
         lambda_rank=args.lambda_rank,
         jpq_negs=args.jpq_negs,
@@ -282,6 +293,7 @@ if __name__ == "__main__":
     t.fit(
         merge_queries_into_docpairs(train_dataset.queries_iter(), train_dataset.docpairs_iter()[:train.pairs_cap]),
         pq_sample_size=train.pq_sample_size,
+        total_steps=train.total_steps,
         valid_every=train.valid_every,
         eval_queries = eval_dataset.get_topics(data.eval_split),
         eval_qrels = eval_dataset.get_qrels(data.eval_split),
@@ -310,10 +322,21 @@ if __name__ == "__main__":
         print(split, name)
         split_savedir = save_dir + "/" + name.replace(":", "_").replace("/", "_")
         os.makedirs(split_savedir, exist_ok=True)
+
+        if split is None:
+            topics = dataset.get_topics()
+            qrels = dataset.get_qrels()
+        else:
+            topics = dataset.get_topics(split)
+            qrels = dataset.get_qrels(split)
+
+
         df = pt.Experiment(
             p,
-            dataset.get_topics(split),
-            dataset.get_qrels(split),
+            # dataset.get_topics(split),
+            # dataset.get_qrels(split),
+            topics,
+            qrels,
             eval_metrics=[RR@10, Recall(rel=2)@100, Recall@100, nDCG@10, "mrt"],
             names=["baseline", "JPQ pq"],
             save_dir = split_savedir,
@@ -322,8 +345,11 @@ if __name__ == "__main__":
         df.to_csv(split_savedir + "/metrics.csv")
         print(df)
 
-    for split in data.test_split.split(","):
-        _do_run(pt.get_dataset(data.test_ds), split, split)
+    if data.test_split is None:
+        _do_run(pt.get_dataset(data.test_ds), None, "test")
+    else:
+        for split in data.test_split.split(","):
+            _do_run(pt.get_dataset(data.test_ds), split, split)
     if data.eval_ds is not None:
         _do_run(pt.get_dataset(data.eval_ds), data.eval_split, "dev")
 
