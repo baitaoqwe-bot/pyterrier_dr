@@ -102,7 +102,7 @@ class ProductQuantizer:
 
         if gpu is not None and encode_gpu is not None:
             logger.info(
-                "Centroid fingerprint " + str(fingerprint_tensor_bytes)
+                "Centroid fingerprint " + fingerprint_tensor_bits_np(self.centroids)
             )
             self.centroids_t = torch.from_numpy(
                 self.centroids

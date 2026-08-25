@@ -114,6 +114,7 @@ class TrainingConfig:
     nbits: int = 8
     pq_sample_size: int = 159_744
     valid_every: int = 500
+    patience: int = 3
     total_steps: int = 1_000_000_000
     in_batch_negs: bool = True
     lambda_rank: bool = True
@@ -151,6 +152,12 @@ def add_training_args(parser: argparse.ArgumentParser):
         help="Maximum number of JPQ training steps."
     )
     p.add_argument("--valid-every", type=int, default=500)
+    p.add_argument(
+        "--patience",
+        type=int,
+        default=3,
+        help="Early stopping patience in validation executions.",
+    )
     p.add_argument("--in-batch-negs", action="store_true", default=True)
     p.add_argument("--no-in-batch", dest="in_batch_negs", action="store_false")
     p.add_argument("--lambda-rank", action="store_true", default=False)
@@ -213,6 +220,7 @@ def parse_args():
         nbits=args.nbits,
         pq_sample_size=args.pq_sample_size,
         valid_every=args.valid_every,
+        patience=args.patience,
         total_steps=args.total_steps,
         in_batch_negs=args.in_batch_negs,
         lambda_rank=args.lambda_rank,
@@ -295,6 +303,7 @@ if __name__ == "__main__":
         pq_sample_size=train.pq_sample_size,
         total_steps=train.total_steps,
         valid_every=train.valid_every,
+        patience=train.patience,
         eval_queries = eval_dataset.get_topics(data.eval_split),
         eval_qrels = eval_dataset.get_qrels(data.eval_split),
         in_batch=train.in_batch_negs,
